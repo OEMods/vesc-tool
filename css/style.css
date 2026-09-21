@@ -1,0 +1,972 @@
+:root {
+  /* Color — OEMods brand, night mode: deep charcoal, warm cream ink */
+  --bg: #15181B;
+  --card: color-mix(in srgb, #FFFFFF 6%, var(--bg));
+  --card-strong: color-mix(in srgb, #FFFFFF 10%, var(--bg));
+  --ink: #F3EFE7;
+  --ink-dim: #9C978C;
+
+  /* Functional status colors, brightened for dark-background legibility */
+  --green: #6FBF6B;
+  --red: #E5645B;
+  --amber: #E0A542;
+
+  /* Type — OEMods brand fonts (Shopify: Cabin headings / Archivo body) */
+  --font-display: 'Cabin', 'Trebuchet MS', sans-serif;
+  --font-body: 'Archivo', 'Helvetica Neue', sans-serif;
+
+  --radius-sm: 8px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+}
+
+* { box-sizing: border-box; }
+
+/* Several sections below set `display` directly on their class
+   (.connect-panel, .telemetry, .dashboard-hero, .quick-actions,
+   .motor-target, etc). Per the CSS cascade, a normal author rule for
+   `display` always beats the browser's built-in normal-priority
+   `[hidden] { display: none }` rule, REGARDLESS of specificity — so
+   without this, toggling the `hidden` DOM property from app.js does
+   nothing on any element whose class sets `display`. This was a real,
+   silent bug (verified: computed style showed `display: grid` on
+   #telemetry even with hidden=true) — not a caching issue. This one
+   rule restores normal hidden-attribute behavior everywhere. */
+[hidden] { display: none !important; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Brand art (logo/mascot) is black linework on a light ground. Invert
+   it so the linework reads light-on-dark, then screen-blend so the
+   (now dark) background melts into the page instead of showing as a box. */
+img.brand-blend {
+  filter: invert(1);
+  mix-blend-mode: screen;
+}
+
+/* Full-page watermark — the OEM gear+wordmark, recolored via mask
+   (so we get an exact color, not a filter-chain approximation) to a
+   faint amber tint sitting behind all content. mask-image uses the
+   PNG's own alpha channel (cream background already stripped out in
+   processing), so only the gear+wordmark shapes show through. */
+.oem-watermark {
+  position: fixed;
+  inset: 0;
+  background-color: var(--amber);
+  -webkit-mask-image: url('../assets/oem-logo-alpha.png');
+  mask-image: url('../assets/oem-logo-alpha.png');
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-size: 70% auto;
+  mask-size: 70% auto;
+  opacity: 0.05;
+  pointer-events: none;
+}
+
+blockquote {
+  margin: 0;
+  padding: 0;
+}
+
+/* ---------- Topbar ---------- */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  position: relative;
+}
+
+.topbar__id {
+  display: flex;
+  align-items: center;
+}
+
+.topbar__right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.topbar__status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-body);
+  font-size: 0.8rem;
+  color: var(--ink-dim);
+}
+
+.statusdot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ink-dim);
+  transition: background-color 0.2s ease;
+}
+
+.topbar__status[data-state="connected"] .statusdot {
+  background: var(--green);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--green) 60%, transparent);
+}
+
+.topbar__status[data-state="connecting"] .statusdot {
+  background: var(--amber);
+  animation: pulse 1s ease-in-out infinite;
+}
+
+.topbar__status[data-state="connected"] #statusText { color: var(--green); font-weight: 700; }
+.topbar__status[data-state="connecting"] #statusText { color: var(--amber); font-weight: 700; }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+/* ---------- Firmware banner ---------- */
+
+.fw-banner {
+  text-align: center;
+  font-size: 0.78rem;
+  color: var(--ink-dim);
+  padding: 6px 20px 0;
+}
+
+/* ---------- Layout ---------- */
+
+.app {
+  flex: 1;
+  width: 100%;
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 24px 20px 44px;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+/* ---------- Banner ---------- */
+
+.banner {
+  padding: 14px 18px;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  border-radius: var(--radius-md);
+  border-left: 4px solid var(--amber);
+  background: color-mix(in srgb, var(--amber) 14%, var(--bg));
+  color: var(--ink);
+}
+
+/* ---------- Connect panel ---------- */
+
+.connect-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 18px;
+  padding: 4px 0 0;
+  position: relative;
+}
+
+.connect-panel__hero {
+  display: flex;
+  align-items: flex-start;
+  gap: 26px;
+  width: 100%;
+}
+
+/* Mascot recolored via mask (same technique as the watermark) to an
+   exact match for the card background color, rather than the bright
+   white/cream the invert+screen trick on the logo produces. */
+.connect-panel__mascot {
+  width: 220px;
+  aspect-ratio: 1 / 1;
+  flex-shrink: 0;
+  background-color: var(--card);
+  -webkit-mask-image: url('../assets/mascot-banana.png');
+  mask-image: url('../assets/mascot-banana.png');
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+}
+
+.connect-panel__copy {
+  flex: 1;
+}
+
+.connect-panel__quote {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: 1.4rem;
+  font-weight: 700;
+  line-height: 1.28;
+  margin: 0 0 6px;
+  padding: 0;
+}
+
+.connect-panel__attribution {
+  font-family: var(--font-body);
+  font-size: 0.8rem;
+  color: var(--ink-dim);
+  margin: 0 0 12px;
+}
+
+.connect-panel__hint {
+  margin: 0 0 18px;
+  color: var(--ink-dim);
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
+.btn {
+  font-family: var(--font-display);
+  font-size: 0.92rem;
+  font-weight: 700;
+  padding: 13px 26px;
+  border: none;
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  transition: opacity 0.15s ease, transform 0.05s ease;
+}
+
+.btn:active { transform: translateY(1px); }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.btn--primary {
+  background: var(--ink);
+  color: var(--bg);
+}
+
+.btn--secondary {
+  background: var(--card-strong);
+  color: var(--ink);
+}
+
+/* Any toggle/selection button marked data-active="true" glows amber —
+   this also means "already set this way in the board's saved config"
+   wherever a control loads its state from a live read (App to Use,
+   control type, traction control, throttle curve mode, etc). */
+.btn[data-active="true"] {
+  background: color-mix(in srgb, var(--amber) 22%, var(--card));
+  box-shadow: 0 0 0 2px var(--amber), 0 0 14px color-mix(in srgb, var(--amber) 55%, transparent);
+  color: var(--ink);
+}
+
+/* ---------- Telemetry ---------- */
+
+.telemetry {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 18px;
+}
+
+.duty-gauge-wrap {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: center;
+  padding: 8px 0 20px;
+}
+
+.duty-gauge {
+  width: 210px;
+  height: 210px;
+}
+
+.duty-gauge__track {
+  fill: none;
+  stroke: var(--card-strong);
+  stroke-width: 14;
+}
+
+.duty-gauge__fill {
+  fill: none;
+  stroke: var(--green);
+  stroke-width: 14;
+  stroke-linecap: round;
+  transform: rotate(-90deg);
+  transform-origin: 100px 100px;
+  transition: stroke-dashoffset 0.15s ease, stroke 0.3s ease;
+}
+
+.duty-gauge__value {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 46px;
+  fill: var(--ink);
+}
+
+.duty-gauge__unit {
+  font-family: var(--font-body);
+  font-size: 14px;
+  fill: var(--ink-dim);
+}
+
+.duty-gauge__label {
+  font-family: var(--font-body);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  fill: var(--ink-dim);
+}
+
+.readout {
+  background: var(--card);
+  border-radius: var(--radius-md);
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.readout__label {
+  font-size: 0.75rem;
+  color: var(--ink-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.readout__value {
+  font-family: var(--font-display);
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.readout__unit {
+  font-size: 0.95rem;
+  color: var(--ink-dim);
+  margin-left: 3px;
+}
+
+#faultReadout.is-fault { background: color-mix(in srgb, var(--red) 16%, var(--bg)); border-left: 4px solid var(--red); }
+#faultReadout.is-fault .readout__value { color: var(--red); }
+
+/* ---------- Motor target ---------- */
+
+.motor-target {
+  background: var(--card);
+  border-radius: var(--radius-md);
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.motor-target__label {
+  font-size: 0.75rem;
+  color: var(--ink-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.motor-target__row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.motor-target__row .btn {
+  padding: 9px 16px;
+  font-size: 0.82rem;
+}
+
+.motor-target__input {
+  font-family: var(--font-body);
+  background: var(--bg);
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--ink);
+  padding: 9px 12px;
+  width: 70px;
+}
+
+.motor-target__note {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--ink-dim);
+  line-height: 1.5;
+}
+
+.motor-target__manual {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 6px;
+}
+
+/* ---------- Setup entry ---------- */
+
+.setup-entry {
+  padding: 4px 0 0;
+}
+
+/* ---------- Console ---------- */
+
+.console {
+  background: var(--card);
+  border-radius: var(--radius-md);
+  margin-top: auto;
+  overflow: hidden;
+}
+
+.console__head {
+  padding: 10px 16px;
+  font-size: 0.72rem;
+  color: var(--ink-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.btn--small {
+  padding: 6px 12px;
+  font-size: 0.68rem;
+}
+
+.console__body {
+  font-family: var(--font-body);
+  font-size: 0.78rem;
+  line-height: 1.6;
+  color: var(--ink-dim);
+  padding: 4px 16px 14px;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.console__body .log-line--error { color: var(--red); }
+.console__body .log-line--ok { color: var(--green); }
+
+@media (max-width: 420px) {
+  .telemetry { grid-template-columns: 1fr; }
+  .connect-panel__hero { flex-direction: column; align-items: flex-start; }
+}
+
+/* ---------- Wizard overlay ---------- */
+
+.wizard-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--bg);
+  z-index: 100;
+  overflow-y: auto;
+}
+
+.wizard {
+  max-width: 560px;
+  margin: 0 auto;
+  min-height: 100vh;
+  padding: 24px 20px 40px;
+  display: flex;
+  flex-direction: column;
+}
+
+.wizard__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding-bottom: 18px;
+  margin-bottom: 24px;
+}
+
+.wizard__title {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.2rem;
+}
+
+.wizard__progress {
+  font-family: var(--font-body);
+  font-size: 0.8rem;
+  color: var(--ink-dim);
+}
+
+.wizard__body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.wizard__heading {
+  font-family: var(--font-display);
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin: 0 0 12px;
+}
+
+.wizard__text {
+  color: var(--ink);
+  line-height: 1.6;
+  margin: 0 0 14px;
+  font-size: 0.95rem;
+}
+
+.wizard__text--note {
+  color: var(--ink-dim);
+  font-size: 0.85rem;
+}
+
+.wizard__text--warn {
+  color: var(--red) !important;
+}
+
+.wizard__num-input {
+  width: 100px;
+}
+
+.wizard__badge {
+  display: inline-block;
+  font-family: var(--font-body);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--amber);
+  background: color-mix(in srgb, var(--amber) 16%, var(--bg));
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+  margin-bottom: 14px;
+}
+
+.wizard__warning {
+  border-left: 4px solid var(--red);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--red) 12%, var(--bg));
+  padding: 20px 22px;
+}
+
+.wizard__warning-badge {
+  display: inline-block;
+  font-family: var(--font-body);
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--red);
+  background: color-mix(in srgb, var(--red) 18%, var(--bg));
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+  margin-bottom: 14px;
+}
+
+.wizard__result-card {
+  border-left: 4px solid var(--green);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--green) 10%, var(--bg));
+  padding: 18px 20px;
+  margin: 14px 0;
+}
+
+.wizard__result-title {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1rem;
+  margin-bottom: 10px;
+}
+
+.wizard__result-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--ink) 8%, transparent);
+  font-variant-numeric: tabular-nums;
+}
+
+.wizard__result-row:last-child {
+  border-bottom: none;
+}
+
+.wizard__result-row span:first-child {
+  color: var(--ink-dim);
+  font-size: 0.85rem;
+}
+
+.wizard__result-row span:last-child {
+  font-weight: 700;
+}
+
+.wizard__live {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--card);
+  border-radius: var(--radius-md);
+  padding: 18px;
+  margin: 8px 0 20px;
+}
+
+.wizard__live-label {
+  font-size: 0.75rem;
+  color: var(--ink-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.wizard__live-value {
+  font-family: var(--font-display);
+  font-size: 1.8rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.wizard__capture-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.wizard__capture {
+  background: var(--card);
+  border-radius: var(--radius-md);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.wizard__capture-label {
+  font-size: 0.75rem;
+  color: var(--ink-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.wizard__capture-value {
+  font-family: var(--font-display);
+  font-size: 1.1rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* A displayed value that isn't editable in this tool — grayed out
+   rather than explained in words, everywhere this pattern is used. */
+.wizard__capture-value--fixed {
+  color: var(--ink-dim);
+  font-weight: 500;
+  opacity: 0.7;
+}
+
+.wizard__options {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 8px 0 4px;
+}
+
+.wizard__option {
+  text-align: left;
+  background: var(--card);
+  border: none;
+  border-radius: var(--radius-md);
+  color: var(--ink);
+  padding: 16px 18px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-family: var(--font-body);
+}
+
+.wizard__option-label {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 0.98rem;
+}
+
+.wizard__option-desc {
+  font-size: 0.82rem;
+  color: var(--ink-dim);
+}
+
+.wizard__option[data-active="true"] {
+  background: color-mix(in srgb, var(--amber) 20%, var(--card));
+  box-shadow: 0 0 0 2px var(--amber), 0 0 16px color-mix(in srgb, var(--amber) 50%, transparent);
+  color: var(--ink);
+}
+
+.wizard__option[data-active="true"] .wizard__option-desc {
+  color: var(--ink-dim);
+}
+
+.wizard__mascot {
+  width: 90px;
+  height: auto;
+  margin-bottom: 12px;
+}
+
+.wizard__footer {
+  margin-top: auto;
+  padding-top: 24px;
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+@media (max-width: 420px) {
+  .wizard__capture-row { grid-template-columns: 1fr; }
+  .wizard__footer { flex-wrap: wrap; }
+}
+
+/* Compact grid variant for a long option list (battery S-count picker) —
+   the default .wizard__options is a single column, too tall for 16 items. */
+.wizard__options--grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+.wizard__options--grid .wizard__option {
+  padding: 12px 14px;
+}
+
+@media (max-width: 420px) {
+  .wizard__options--grid { grid-template-columns: 1fr; }
+}
+
+/* ---------- Speed step: slider + speedometer ---------- */
+
+.wizard__slider {
+  width: 100%;
+  margin: 6px 0 4px;
+  accent-color: var(--amber);
+}
+
+.wizard__speedo-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: var(--card);
+  border-radius: var(--radius-md);
+  padding: 18px;
+  margin: 8px 0 16px;
+}
+
+.wizard__speedo {
+  width: 100%;
+  max-width: 260px;
+  height: auto;
+}
+
+.wizard__speedo-value {
+  font-family: var(--font-display);
+  font-size: 1.4rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  margin-top: 4px;
+}
+
+/* ---------- Motor config page ---------- */
+
+.motor-config__toggle {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
+.motor-config__toggle .btn {
+  flex: 1;
+}
+
+.motor-config__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 14px 0 4px;
+}
+
+.motor-config__compare-row {
+  display: grid;
+  grid-template-columns: 1.6fr 1fr 1fr;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--ink) 8%, transparent);
+  font-variant-numeric: tabular-nums;
+}
+
+.motor-config__compare-row:last-child {
+  border-bottom: none;
+}
+
+.motor-config__compare-row--head {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ink-dim);
+  border-bottom: 1px solid color-mix(in srgb, var(--ink) 14%, transparent);
+}
+
+.motor-config__compare-row--mismatch {
+  background: color-mix(in srgb, var(--amber) 22%, transparent);
+  border-radius: var(--radius-sm);
+}
+
+@media (max-width: 640px) {
+  .motor-config__actions { flex-direction: column; }
+  .motor-config__actions .btn { width: 100%; }
+}
+
+/* ---------- Dashboard hero (home screen speed readout) ---------- */
+/* Bike-dashboard-style big number — this is the thing a parent glances
+   at from across the driveway while the kid is riding, so it's sized
+   and weighted very differently from the smaller telemetry tiles. */
+
+.dashboard-hero {
+  background: var(--card);
+  border-radius: var(--radius-lg);
+  padding: 22px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  margin-bottom: 4px;
+}
+
+.dashboard-hero__value {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 4.2rem;
+  line-height: 1;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.dashboard-hero__unit {
+  font-size: 1.1rem;
+  color: var(--ink-dim);
+  margin-left: 6px;
+}
+
+.dashboard-hero__label {
+  font-size: 0.78rem;
+  color: var(--ink-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-top: 4px;
+}
+
+/* ---------- Quick actions (Profiles + Quick Adjust) ---------- */
+
+.quick-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.quick-actions__label {
+  font-size: 0.75rem;
+  color: var(--ink-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.quick-actions__row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.quick-actions__row--four {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+.quick-actions__row .btn {
+  padding: 12px 8px;
+  font-size: 0.78rem;
+  white-space: normal;
+  line-height: 1.25;
+}
+
+@media (max-width: 480px) {
+  .quick-actions__row--four { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* ---------- Quick Adjust bottom sheet ---------- */
+
+.quickadjust-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 110;
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.quickadjust {
+  width: 100%;
+  max-width: 480px;
+  background: var(--card-strong);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  padding: 20px 20px 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.quickadjust__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.quickadjust__title {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.05rem;
+}
+
+.quickadjust__value {
+  align-self: center;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 2.6rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.quickadjust__unit {
+  font-size: 1.1rem;
+  color: var(--ink-dim);
+  margin-left: 6px;
+}
+
+.quickadjust__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.quickadjust__row .wizard__slider {
+  flex: 1;
+}
+
+.quickadjust__step {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  font-size: 1.3rem;
+  border-radius: 50%;
+  flex-shrink: 0;
+}

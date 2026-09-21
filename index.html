@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#15181B" />
+  <title>OEM Bananas VESC Connect</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cabin:wght@400;500;600;700&family=Archivo:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+
+  <div class="oem-watermark"></div>
+
+  <header class="topbar">
+    <div class="topbar__id"></div>
+    <div class="topbar__right">
+      <div class="topbar__status" id="statusPill" data-state="idle">
+        <span class="statusdot"></span>
+        <span id="statusText">Not connected</span>
+      </div>
+      <button class="btn btn--secondary btn--small" id="disconnectBtn" hidden>Disconnect</button>
+    </div>
+  </header>
+
+  <div class="fw-banner" id="fwBanner" hidden></div>
+
+  <main class="app">
+
+    <!-- Unsupported-browser banner, hidden by default -->
+    <div class="banner banner--warn" id="unsupportedBanner" hidden>
+      This browser can't talk to USB serial devices. Open this page in
+      <strong>Chrome</strong> or <strong>Edge</strong> on a desktop —
+      Safari, Firefox, and all mobile browsers don't support it.
+    </div>
+
+    <section class="connect-panel" id="connectPanel">
+      <div class="connect-panel__hero">
+        <div class="connect-panel__mascot"></div>
+        <div class="connect-panel__copy">
+          <blockquote class="connect-panel__quote">
+            "There is never enough power; just not enough traction."
+          </blockquote>
+          <p class="connect-panel__attribution">— Carroll Shelby</p>
+          <p class="connect-panel__hint">Welcome to the OEM VESC portal. If connecting with
+          Bluetooth, please confirm your Bluetooth is enabled. If connecting with a laptop,
+          please connect the USB prior to connecting the battery. For safety, it is
+          recommended to always raise the vehicle drive wheels off the ground, free of any
+          obstacles, before changing tune settings.</p>
+          <button class="btn btn--primary" id="connectBtn">Connect to VESC</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="dashboard-hero" id="dashboardHero" hidden>
+      <div>
+        <span class="dashboard-hero__value" id="speedValue">–</span><span class="dashboard-hero__unit">mph</span>
+      </div>
+      <span class="dashboard-hero__label">Speed</span>
+    </section>
+
+    <section class="telemetry" id="telemetry" hidden>
+      <div class="duty-gauge-wrap">
+        <svg viewBox="0 0 200 200" class="duty-gauge">
+          <circle class="duty-gauge__track" cx="100" cy="100" r="80"></circle>
+          <circle class="duty-gauge__fill" id="dutyGaugeFill" cx="100" cy="100" r="80"
+            stroke-dasharray="502.65" stroke-dashoffset="502.65"></circle>
+          <text x="100" y="98" text-anchor="middle" class="duty-gauge__value" id="dutyGaugeValue">0</text>
+          <text x="100" y="122" text-anchor="middle" class="duty-gauge__unit">%</text>
+          <text x="100" y="152" text-anchor="middle" class="duty-gauge__label">Duty cycle</text>
+        </svg>
+      </div>
+      <div class="readout">
+        <span class="readout__label">Battery voltage</span>
+        <span class="readout__value"><span id="vIn">–</span><span class="readout__unit">V</span></span>
+      </div>
+      <div class="readout">
+        <span class="readout__label">Motor current</span>
+        <span class="readout__value"><span id="currentMotor">–</span><span class="readout__unit">A</span></span>
+      </div>
+      <div class="readout">
+        <span class="readout__label">Battery current</span>
+        <span class="readout__value"><span id="currentIn">–</span><span class="readout__unit">A</span></span>
+      </div>
+      <div class="readout">
+        <span class="readout__label">RPM (electrical)</span>
+        <span class="readout__value"><span id="rpm">–</span></span>
+      </div>
+      <div class="readout">
+        <span class="readout__label">Controller temp</span>
+        <span class="readout__value"><span id="tempMos">–</span><span class="readout__unit">°C</span></span>
+      </div>
+      <div class="readout">
+        <span class="readout__label">Motor temp</span>
+        <span class="readout__value"><span id="tempMotor">–</span><span class="readout__unit">°C</span></span>
+      </div>
+      <div class="readout" id="faultReadout">
+        <span class="readout__label">Fault</span>
+        <span class="readout__value"><span id="fault">None</span></span>
+      </div>
+    </section>
+
+    <section class="quick-actions" id="quickActions" hidden>
+      <span class="quick-actions__label">Profiles</span>
+      <div class="quick-actions__row" id="profileButtons">
+        <button class="btn btn--secondary" id="profileBtn0">Profile 1</button>
+        <button class="btn btn--secondary" id="profileBtn1">Profile 2</button>
+        <button class="btn btn--secondary" id="profileBtn2">Profile 3</button>
+      </div>
+      <span class="quick-actions__label">Quick adjust</span>
+      <div class="quick-actions__row quick-actions__row--four">
+        <button class="btn btn--secondary" id="qaSpeedBtn">Speed</button>
+        <button class="btn btn--secondary" id="qaRampBtn">Ramp time</button>
+        <button class="btn btn--secondary" id="qaMotorCurrentBtn">Motor current</button>
+        <button class="btn btn--secondary" id="qaBatteryCurrentBtn">Battery current</button>
+      </div>
+    </section>
+
+    <section class="setup-entry" id="setupEntry" hidden>
+      <div class="wizard__capture-row" style="grid-template-columns: repeat(5, auto);">
+        <button class="btn btn--secondary" id="newSetupBtn">New setup</button>
+        <button class="btn btn--secondary" id="pedalConfigBtn">App (pedal) config</button>
+        <button class="btn btn--secondary" id="motorConfigBtn">Motor config</button>
+        <button class="btn btn--secondary" id="profilesBtn">Profiles</button>
+        <button class="btn btn--secondary" id="rtDataBtn">RT Data</button>
+      </div>
+    </section>
+
+    <section class="motor-target" id="motorTarget" hidden>
+      <span class="motor-target__label">Connected VESC</span>
+      <div class="motor-target__row" id="motorTargetButtons">
+        <button class="btn btn--secondary" id="targetLocalBtn" data-active="true">THIS VESC</button>
+        <button class="btn btn--secondary" id="scanCanBtn">LINKED VESC</button>
+      </div>
+    </section>
+
+  </main>
+
+  <div class="wizard-overlay" id="wizardOverlay" hidden></div>
+  <div class="wizard-overlay" id="pedalConfigOverlay" hidden></div>
+  <div class="wizard-overlay" id="motorConfigOverlay" hidden></div>
+  <div class="wizard-overlay" id="rtDataOverlay" hidden></div>
+  <div class="wizard-overlay" id="profilesOverlay" hidden></div>
+  <div class="quickadjust-overlay" id="quickAdjustOverlay" hidden></div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
