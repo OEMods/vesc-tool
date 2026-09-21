@@ -403,14 +403,25 @@ export function batteryVoltages(sCount) {
   const perCellNominal = 3.6;
   const perCellCutStart = 3.3;
   const perCellCutEnd = 3.0;
-  const perCellMinVin = 2.7;  // absolute fault floor, below cutEnd with margin
-  const perCellMaxVin = 4.25; // absolute fault ceiling, above full-charge with margin
+  // l_min_vin/l_max_vin (MCCONF_OFFSETS.lMinVin/lMaxVin) are firmware's
+  // absolute, pack-agnostic hard fault floor/ceiling — not a per-cell
+  // value scaled to whatever pack is plugged in. Confirmed against
+  // firmware's own compiled-in defaults (12V / 90V): these bound the
+  // widest range of packs the hardware could ever see, wide enough to
+  // never be the thing that trips first (the real per-pack protection
+  // is cutStart/cutEnd below), so this app leaves them at firmware's
+  // own defaults for every S-count rather than computing a per-cell
+  // value that would risk being tighter than the actual pack's normal
+  // operating range on a small S-count, or falsely appear "protective"
+  // on a large one.
+  const MIN_VIN_DEFAULT = 12;
+  const MAX_VIN_DEFAULT = 90;
   return {
     nominal: sCount * perCellNominal,
     cutStart: sCount * perCellCutStart,
     cutEnd: sCount * perCellCutEnd,
-    minVin: sCount * perCellMinVin,
-    maxVin: sCount * perCellMaxVin,
+    minVin: MIN_VIN_DEFAULT,
+    maxVin: MAX_VIN_DEFAULT,
   };
 }
 
