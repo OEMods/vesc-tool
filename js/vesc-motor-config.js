@@ -33,7 +33,8 @@
 
 import {
   MCCONF_OFFSETS, parseMcConfConfigFields, batteryComboLabel, batteryVoltages,
-  mpsToErpm, erpmToMps,
+  mpsToErpm, erpmToMps, PULLEY_MOTOR_TEETH_OPTIONS, PULLEY_HUB_TEETH_OPTIONS,
+  pulleyGearRatio, closestPulleyPair,
 } from './vesc-protocol.js';
 
 const MPS_TO_MPH = 2.2369362921;
@@ -52,6 +53,8 @@ const DEFAULTS = () => ({
   batteryCurrentMaxRegen: -4,
   batteryS: null,
   wheelDiameterMm: null,
+  motorPulleyTeeth: null,
+  hubPulleyTeeth: null,
   gearRatio: null,
   motorPoles: null,
   speedLimitMph: 10,
@@ -281,14 +284,29 @@ export class MotorConfigPage {
           <input type="number" step="1" class="motor-target__input wizard__num-input" id="mcTireDiameter" />
         </div>
         <div class="wizard__capture">
-          <span class="wizard__capture-label">Gear ratio</span>
-          <input type="number" step="0.01" class="motor-target__input wizard__num-input" id="mcGearRatio" />
-        </div>
-        <div class="wizard__capture">
           <span class="wizard__capture-label">Motor poles</span>
           <input type="number" step="1" class="motor-target__input wizard__num-input" id="mcMotorPoles" />
         </div>
       </div>
+
+      <div class="wizard__capture-row">
+        <div class="wizard__capture">
+          <span class="wizard__capture-label">Motor pulley (teeth)</span>
+          <select class="motor-target__input wizard__num-input" id="mcMotorPulley">
+            <option value="">Select…</option>
+            ${PULLEY_MOTOR_TEETH_OPTIONS.map((t) => `<option value="${t}">${t}T</option>`).join('')}
+          </select>
+        </div>
+        <div class="wizard__capture">
+          <span class="wizard__capture-label">Hub pulley (teeth)</span>
+          <select class="motor-target__input wizard__num-input" id="mcHubPulley">
+            <option value="">Select…</option>
+            ${PULLEY_HUB_TEETH_OPTIONS.map((t) => `<option value="${t}">${t}T</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      <p class="wizard__text wizard__text--note">Gear ratio: <span id="mcGearRatioValue">–</span>
+      (hub teeth &divide; motor teeth).</p>
 
       <div class="wizard__speedo-wrap">
         <svg id="mcSpeedoSvg" class="wizard__speedo" viewBox="0 0 200 120" aria-hidden="true">
@@ -348,7 +366,9 @@ export class MotorConfigPage {
     const batterySSelect = formEl.querySelector('#mcBatteryS');
     const batteryDetailEl = formEl.querySelector('#mcBatteryDetail');
     const tireInput = formEl.querySelector('#mcTireDiameter');
-    const gearInput = formEl.querySelector('#mcGearRatio');
+    const motorPulleySelect = formEl.querySelector('#mcMotorPulley');
+    const hubPulleySelect = formEl.querySelector('#mcHubPulley');
+    const gearRatioValueEl = formEl.querySelector('#mcGearRatioValue');
     const polesInput = formEl.querySelector('#mcMotorPoles');
     const slider = formEl.querySelector('#mcSpeedSlider');
     const speedoLabel = formEl.querySelector('#mcSpeedoLabel');
@@ -366,7 +386,15 @@ export class MotorConfigPage {
     batteryCurrentMaxRegenInput.value = f.batteryCurrentMaxRegen;
     batterySSelect.value = f.batteryS != null ? String(f.batteryS) : '';
     if (f.wheelDiameterMm != null) tireInput.value = f.wheelDiameterMm;
-    if (f.gearRatio != null) gearInput.value = f.gearRatio;
+    if (f.motorPulleyTeeth != null) motorPulleySelect.value = String(f.motorPulleyTeeth);
+    if (f.hubPulleyTeeth != null) hubPulleySelect.value = String(f.hubPulleyTeeth);
+    if (f.motorPulleyTeeth == null && f.hubPulleyTeeth == null && f.gearRatio) {
+      const approx = closestPulleyPair(f.gearRatio);
+      if (approx) {
+        motorPulleySelect.value = String(approx.motorTeeth);
+        hubPulleySelect.value = String(approx.hubTeeth);
+      }
+    }
     if (f.motorPoles != null) polesInput.value = f.motorPoles;
     reverseErpmInput.value = f.reverseErpm;
     erpmStartInput.value = f.erpmLimitStartPct;
@@ -399,12 +427,19 @@ export class MotorConfigPage {
     });
     renderBatteryDetail();
 
+    const updatePulleyRatio = () => {
+      const motorTeeth = parseInt(motorPulleySelect.value, 10);
+      const hubTeeth = parseInt(hubPulleySelect.value, 10);
+      f.motorPulleyTeeth = Number.isNaN(motorTeeth) ? null : motorTeeth;
+      f.hubPulleyTeeth = Number.isNaN(hubTeeth) ? null : hubTeeth;
+      f.gearRatio = pulleyGearRatio(f.motorPulleyTeeth, f.hubPulleyTeeth);
+      gearRatioValueEl.textContent = f.gearRatio != null ? f.gearRatio.toFixed(2) : '–';
+    };
+
     const updateSpeedo = () => {
       const d = parseFloat(tireInput.value);
-      const g = parseFloat(gearInput.value);
       const p = parseFloat(polesInput.value);
       f.wheelDiameterMm = Number.isNaN(d) ? null : d;
-      f.gearRatio = Number.isNaN(g) ? null : g;
       f.motorPoles = Number.isNaN(p) ? null : p;
       f.speedLimitMph = parseFloat(slider.value);
 
@@ -429,7 +464,9 @@ export class MotorConfigPage {
       speedoNeedle.setAttribute('x2', String(cx - len * Math.cos(rad)));
       speedoNeedle.setAttribute('y2', String(cy - len * Math.sin(rad)));
     };
-    [tireInput, gearInput, polesInput, slider].forEach((el) => el.addEventListener('input', updateSpeedo));
+    [tireInput, polesInput, slider].forEach((el) => el.addEventListener('input', updateSpeedo));
+    [motorPulleySelect, hubPulleySelect].forEach((el) => el.addEventListener('change', () => { updatePulleyRatio(); updateSpeedo(); }));
+    updatePulleyRatio();
     updateSpeedo();
   }
 
