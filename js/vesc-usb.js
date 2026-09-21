@@ -42,6 +42,8 @@ export class VescUsbClient {
     this._pendingPingCan = null;          // one-shot resolver, see detectLinkedCanId
     this._pendingFwVersion = null;        // one-shot resolver, see requestFwVersion
     this._pendingDetectApplyAllFoc = null; // one-shot resolver, see detectApplyAllFoc
+    this._pendingMcConfDefaultRead = null; // one-shot resolver, see requestMcConfDefaultRaw
+    this._pendingAppConfDefaultRead = null; // one-shot resolver, see requestAppConfDefaultRaw
     // null = talk to the directly-connected board. A number = forward
     // every request over CAN to that controller ID (see
     // buildForwardedCommand — used for dual-motor boards where the
@@ -447,6 +449,165 @@ export class VescUsbClient {
   }
 
   /**
+   * Request the firmware's compiled-in default MCCONF blob for a
+   * specific target (COMM_GET_MCCONF_DEFAULT). Same wire format as
+   * COMM_GET_MCCONF, but firmware populates it from
+   * confgenerator_set_defaults_mcconf() instead of the live config.
+   * Per commands.c, the default reply still has this board's real
+   * FOC current/voltage ADC calibration offsets spliced back in
+   * server-side — so this blob is safe to write straight back via
+   * SET_MCCONF without decoding or patching anything (see
+   * resetMcConfToDefaults). Pass null for the directly-connected
+   * board, or a CAN ID to forward.
+   */
+  async requestMcConfDefaultRaw(targetCanId, timeoutMs = 4000) {
+    const packet = targetCanId != null
+      ? buildForwardedCommand(targetCanId, Uint8Array.of(COMM.GET_MCCONF_DEFAULT))
+      : buildSimpleCommand(COMM.GET_MCCONF_DEFAULT);
+
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this._pendingMcConfDefaultRead = null;
+        reject(new Error('Timed out waiting for MCCONF defaults'));
+      }, timeoutMs);
+      this._pendingMcConfDefaultRead = (bytes) => {
+        clearTimeout(timer);
+        this._pendingMcConfDefaultRead = null;
+        resolve(bytes);
+      };
+      this._write(packet).catch((err) => {
+        clearTimeout(timer);
+        this._pendingMcConfDefaultRead = null;
+        reject(err);
+      });
+    });
+  }
+
+  /**
+   * Reset MCCONF to firmware defaults for a specific target: read the
+   * compiled-in default blob (already carries this board's real
+   * hardware calibration — see requestMcConfDefaultRaw) and write it
+   * straight back unmodified via COMM_SET_MCCONF. No byte-offset
+   * patching involved, so this is safe even though MCCONF's general
+   * field layout isn't hardware-verified (see writeMcConfRaw's doc
+   * comment) — nothing here is decoded, only round-tripped. Pass null
+   * for the directly-connected board, or a CAN ID to forward.
+   */
+  async resetMcConfToDefaults(targetCanId, timeoutMs = 6000) {
+    const defaults = await this.requestMcConfDefaultRaw(targetCanId, timeoutMs);
+
+    const inner = new Uint8Array(1 + defaults.length);
+    inner[0] = COMM.SET_MCCONF;
+    inner.set(defaults, 1);
+
+    const packet = targetCanId != null
+      ? buildForwardedCommand(targetCanId, inner)
+      : framePacket(inner);
+
+    const ackPromise = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this._pendingMcConfWriteAck = null;
+        reject(new Error('Timed out waiting for SET_MCCONF confirmation'));
+      }, timeoutMs);
+      this._pendingMcConfWriteAck = () => {
+        clearTimeout(timer);
+        this._pendingMcConfWriteAck = null;
+        resolve();
+      };
+    });
+
+    await this._write(packet);
+    await ackPromise;
+    return true;
+  }
+
+  /**
+   * Reset MCCONF to firmware defaults on BOTH sides of the board,
+   * mirroring writeMcConfBothSides: always direct (the physically-
+   * connected motor), and — if a linked CAN ID is known
+   * (this.targetCanId) — also forwarded to that motor. See
+   * writeMcConfBothSides for the return shape and why this is two
+   * separate real writes rather than one auto-fanned-out command.
+   */
+  async resetMcConfToDefaultsBothSides(timeoutMs = 6000) {
+    await this.resetMcConfToDefaults(null, timeoutMs);
+    if (this.targetCanId == null) {
+      return { direct: true, linked: null };
+    }
+    try {
+      await this.resetMcConfToDefaults(this.targetCanId, timeoutMs);
+      return { direct: true, linked: true };
+    } catch (err) {
+      return { direct: true, linked: false, linkedError: err.message };
+    }
+  }
+
+  /**
+   * Request the firmware's compiled-in default APPCONF blob
+   * (COMM_GET_APPCONF_DEFAULT). Same reasoning as
+   * requestMcConfDefaultRaw, and same forwarding convention as the
+   * rest of the APPCONF methods (implicit this.targetCanId, single
+   * target — app-level config like the pedal only lives on one
+   * physical side of a dual-motor board, unlike MCCONF).
+   */
+  async requestAppConfDefaultRaw(timeoutMs = 4000) {
+    const packet = this.targetCanId != null
+      ? buildForwardedCommand(this.targetCanId, Uint8Array.of(COMM.GET_APPCONF_DEFAULT))
+      : buildSimpleCommand(COMM.GET_APPCONF_DEFAULT);
+
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this._pendingAppConfDefaultRead = null;
+        reject(new Error('Timed out waiting for APPCONF defaults'));
+      }, timeoutMs);
+      this._pendingAppConfDefaultRead = (bytes) => {
+        clearTimeout(timer);
+        this._pendingAppConfDefaultRead = null;
+        resolve(bytes);
+      };
+      this._write(packet).catch((err) => {
+        clearTimeout(timer);
+        this._pendingAppConfDefaultRead = null;
+        reject(err);
+      });
+    });
+  }
+
+  /**
+   * Reset APPCONF to firmware defaults: read the compiled-in default
+   * blob and write it straight back unmodified via COMM_SET_APPCONF.
+   * No byte-offset patching involved — nothing decoded, only
+   * round-tripped.
+   */
+  async resetAppConfToDefaults(timeoutMs = 6000) {
+    const defaults = await this.requestAppConfDefaultRaw(timeoutMs);
+
+    const inner = new Uint8Array(1 + defaults.length);
+    inner[0] = COMM.SET_APPCONF;
+    inner.set(defaults, 1);
+
+    const packet = this.targetCanId != null
+      ? buildForwardedCommand(this.targetCanId, inner)
+      : framePacket(inner);
+
+    const ackPromise = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this._pendingAppConfWriteAck = null;
+        reject(new Error('Timed out waiting for SET_APPCONF confirmation'));
+      }, timeoutMs);
+      this._pendingAppConfWriteAck = () => {
+        clearTimeout(timer);
+        this._pendingAppConfWriteAck = null;
+        resolve();
+      };
+    });
+
+    await this._write(packet);
+    await ackPromise;
+    return true;
+  }
+
+  /**
    * Ask the connected board which other CAN devices it knows about.
    * Command ID (62) is confirmed against firmware source, but the
    * reply's exact byte layout isn't — the response handler surfaces
@@ -532,6 +693,10 @@ export class VescUsbClient {
     } else if (commId === COMM.FW_VERSION) {
       const fw = parseFwVersion(body);
       if (this._pendingFwVersion) this._pendingFwVersion(fw);
+    } else if (commId === COMM.GET_MCCONF_DEFAULT) {
+      if (this._pendingMcConfDefaultRead) this._pendingMcConfDefaultRead(body);
+    } else if (commId === COMM.GET_APPCONF_DEFAULT) {
+      if (this._pendingAppConfDefaultRead) this._pendingAppConfDefaultRead(body);
     }
   }
 
