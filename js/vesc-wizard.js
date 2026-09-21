@@ -32,10 +32,11 @@
 import {
   APPCONF_OFFSETS, CONTROL_TYPES, parseMcConfMotorSummary,
   MCCONF_OFFSETS, parseMcConfSetupFields, batteryComboLabel, batteryVoltages,
-  mpsToErpm,
+  mpsToErpm, PULLEY_MOTOR_TEETH_OPTIONS, PULLEY_HUB_TEETH_OPTIONS,
+  pulleyGearRatio, closestPulleyPair,
 } from './vesc-protocol.js';
 
-const STEPS = ['safety', 'welcome', 'pedal', 'controlType', 'pedalRange', 'motor', 'battery', 'speed', 'done'];
+const STEPS = ['safety', 'welcome', 'resetDefaults', 'pedal', 'controlType', 'pedalRange', 'motor', 'battery', 'speed', 'done'];
 
 // mm/s -> mph, for the speed step's slider/speedometer (Scott's kits and
 // customers all think in mph, not the SI units the firmware math wants).
@@ -92,7 +93,9 @@ export class SetupWizard {
     this.batteryS = null; // selected S-count, battery step
     this.batteryWritten = false;
     this.wheelDiameterMm = null; // speed step
-    this.gearRatio = null;       // prefilled from a live MCCONF read, editable
+    this.motorPulleyTeeth = null; // pulley calculator, speed step
+    this.hubPulleyTeeth = null;   // pulley calculator, speed step
+    this.gearRatio = null;       // derived from the pulley teeth above (or prefilled from a live MCCONF read as an approximation)
     this.motorPoles = null;      // prefilled from a live MCCONF read, editable
     this.speedLimitMph = null;   // desired top speed, drives the slider/speedometer
     this.speedWritten = false;
@@ -115,6 +118,8 @@ export class SetupWizard {
     this.batteryS = null;
     this.batteryWritten = false;
     this.wheelDiameterMm = null;
+    this.motorPulleyTeeth = null;
+    this.hubPulleyTeeth = null;
     this.gearRatio = null;
     this.motorPoles = null;
     this.speedLimitMph = null;
@@ -173,6 +178,7 @@ export class SetupWizard {
     switch (step) {
       case 'safety': return this._stepSafety();
       case 'welcome': return this._stepWelcome();
+      case 'resetDefaults': return this._stepResetDefaults();
       case 'pedal': return this._stepPedal();
       case 'controlType': return this._stepControlType();
       case 'pedalRange': return this._stepPedalRange();
@@ -228,6 +234,82 @@ export class SetupWizard {
       motor and battery settings. Takes a few minutes.</p>
     `;
     el.appendChild(this._buildFooter({ back: false, nextLabel: 'Start' }));
+    return el;
+  }
+
+  // ---------------- Step: Reset to firmware defaults (optional) ----------------
+  //
+  // Mirrors official VESC Tool's own first-run prompt: before anything
+  // else is configured, offer to wipe the board's current motor
+  // (MCCONF) and app (APPCONF) config back to firmware's compiled-in
+  // defaults. Safe to skip — every later step in this wizard writes
+  // its own values regardless — but starting from a known-clean slate
+  // avoids exactly the kind of stale/mismatched leftover config (see
+  // the battery-cutoff issue that prompted adding this) that a prior
+  // setup, a half-finished tune, or another tool can leave behind.
+  //
+  // Uses COMM_GET_MCCONF_DEFAULT/COMM_GET_APPCONF_DEFAULT + a plain
+  // write-back (see resetMcConfToDefaultsBothSides/resetAppConfToDefaults
+  // in vesc-usb.js) — firmware splices this board's real ADC
+  // calibration into the "default" blob it returns, so this can't
+  // clobber hardware calibration the way a guessed byte-patch could.
+
+  _stepResetDefaults() {
+    const el = document.createElement('div');
+    el.innerHTML = `
+      <h2 class="wizard__heading">Reset to firmware defaults?</h2>
+      <p class="wizard__text">Before syncing your pedal, you can wipe this VESC's motor and
+      app configuration back to firmware's out-of-the-box defaults. This clears out anything
+      left over from a previous setup or tune — including this VESC's own hardware calibration,
+      which firmware re-applies automatically, so nothing gets lost.</p>
+      <p class="wizard__text">Every setting this wizard touches gets written fresh in the
+      steps ahead either way, so this is optional — but it's a good habit if this board has
+      been configured before, or if something about its current behavior seems off.</p>
+      <p class="wizard__text wizard__text--note" id="wizResetDefaultsStatus"></p>
+    `;
+
+    const footer = document.createElement('div');
+    footer.className = 'wizard__footer';
+    const statusEl = el.querySelector('#wizResetDefaultsStatus');
+
+    const backBtn = document.createElement('button');
+    backBtn.className = 'btn btn--secondary';
+    backBtn.textContent = 'Back';
+    backBtn.addEventListener('click', () => this._back());
+    footer.appendChild(backBtn);
+
+    const skipBtn = document.createElement('button');
+    skipBtn.className = 'btn btn--secondary';
+    skipBtn.textContent = 'Skip';
+    skipBtn.addEventListener('click', () => this._next());
+    footer.appendChild(skipBtn);
+
+    const resetBtn = document.createElement('button');
+    resetBtn.className = 'btn btn--primary';
+    resetBtn.textContent = 'Reset to defaults';
+    resetBtn.addEventListener('click', async () => {
+      resetBtn.disabled = true;
+      skipBtn.disabled = true;
+      backBtn.disabled = true;
+      statusEl.classList.remove('wizard__text--warn');
+      statusEl.textContent = 'Resetting motor config…';
+      try {
+        await this.client.resetMcConfToDefaultsBothSides();
+        statusEl.textContent = 'Resetting app config…';
+        await this.client.resetAppConfToDefaults();
+        statusEl.textContent = 'Reset complete.';
+        this._next();
+      } catch (err) {
+        statusEl.classList.add('wizard__text--warn');
+        statusEl.textContent = `Reset failed: ${err.message}. You can try again, or skip and continue.`;
+        resetBtn.disabled = false;
+        skipBtn.disabled = false;
+        backBtn.disabled = false;
+      }
+    });
+    footer.appendChild(resetBtn);
+
+    el.appendChild(footer);
     return el;
   }
 
@@ -835,14 +917,29 @@ export class SetupWizard {
           <input type="number" step="1" class="motor-target__input wizard__num-input" id="wizTireDiameter" />
         </div>
         <div class="wizard__capture">
-          <span class="wizard__capture-label">Gear ratio</span>
-          <input type="number" step="0.01" class="motor-target__input wizard__num-input" id="wizGearRatio" />
-        </div>
-        <div class="wizard__capture">
           <span class="wizard__capture-label">Motor poles</span>
           <input type="number" step="1" class="motor-target__input wizard__num-input" id="wizMotorPoles" />
         </div>
       </div>
+
+      <div class="wizard__capture-row">
+        <div class="wizard__capture">
+          <span class="wizard__capture-label">Motor pulley (teeth)</span>
+          <select class="motor-target__input wizard__num-input" id="wizMotorPulley">
+            <option value="">Select…</option>
+            ${PULLEY_MOTOR_TEETH_OPTIONS.map((t) => `<option value="${t}">${t}T</option>`).join('')}
+          </select>
+        </div>
+        <div class="wizard__capture">
+          <span class="wizard__capture-label">Hub pulley (teeth)</span>
+          <select class="motor-target__input wizard__num-input" id="wizHubPulley">
+            <option value="">Select…</option>
+            ${PULLEY_HUB_TEETH_OPTIONS.map((t) => `<option value="${t}">${t}T</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      <p class="wizard__text wizard__text--note">Gear ratio: <span id="wizGearRatioValue">–</span>
+      (hub teeth &divide; motor teeth).</p>
       <p class="wizard__text wizard__text--note" id="wizSpeedPrefillStatus">Reading current
       gearing/pole count from the VESC…</p>
 
@@ -868,7 +965,9 @@ export class SetupWizard {
     `;
 
     const tireInput = el.querySelector('#wizTireDiameter');
-    const gearInput = el.querySelector('#wizGearRatio');
+    const motorPulleySelect = el.querySelector('#wizMotorPulley');
+    const hubPulleySelect = el.querySelector('#wizHubPulley');
+    const gearRatioValueEl = el.querySelector('#wizGearRatioValue');
     const polesInput = el.querySelector('#wizMotorPoles');
     const prefillStatusEl = el.querySelector('#wizSpeedPrefillStatus');
     const controlsEl = el.querySelector('#wizSpeedControls');
@@ -882,14 +981,24 @@ export class SetupWizard {
     const statusEl = el.querySelector('#wizSpeedStatus');
 
     if (this.wheelDiameterMm != null) tireInput.value = this.wheelDiameterMm;
-    if (this.gearRatio != null) gearInput.value = this.gearRatio;
+    if (this.motorPulleyTeeth != null) motorPulleySelect.value = String(this.motorPulleyTeeth);
+    if (this.hubPulleyTeeth != null) hubPulleySelect.value = String(this.hubPulleyTeeth);
     if (this.motorPoles != null) polesInput.value = this.motorPoles;
 
     const canCompute = () => {
       const d = parseFloat(tireInput.value);
-      const g = parseFloat(gearInput.value);
+      const g = this.gearRatio;
       const p = parseFloat(polesInput.value);
       return !Number.isNaN(d) && d > 0 && !Number.isNaN(g) && g > 0 && !Number.isNaN(p) && p > 0;
+    };
+
+    const updatePulleyRatio = () => {
+      const motorTeeth = parseInt(motorPulleySelect.value, 10);
+      const hubTeeth = parseInt(hubPulleySelect.value, 10);
+      this.motorPulleyTeeth = Number.isNaN(motorTeeth) ? null : motorTeeth;
+      this.hubPulleyTeeth = Number.isNaN(hubTeeth) ? null : hubTeeth;
+      this.gearRatio = pulleyGearRatio(this.motorPulleyTeeth, this.hubPulleyTeeth);
+      gearRatioValueEl.textContent = this.gearRatio != null ? this.gearRatio.toFixed(2) : '–';
     };
 
     const updateSpeedo = () => {
@@ -897,7 +1006,6 @@ export class SetupWizard {
       controlsEl.style.display = '';
       applyBtn.disabled = false;
       this.wheelDiameterMm = parseFloat(tireInput.value);
-      this.gearRatio = parseFloat(gearInput.value);
       this.motorPoles = parseFloat(polesInput.value);
       this.speedLimitMph = parseFloat(slider.value);
 
@@ -921,31 +1029,47 @@ export class SetupWizard {
       speedoNeedle.setAttribute('y2', String(y2));
     };
 
-    [tireInput, gearInput, polesInput].forEach((input) => {
+    [tireInput, polesInput].forEach((input) => {
       input.addEventListener('input', () => { this.speedWritten = false; updateSpeedo(); });
+    });
+    [motorPulleySelect, hubPulleySelect].forEach((select) => {
+      select.addEventListener('change', () => { this.speedWritten = false; updatePulleyRatio(); updateSpeedo(); });
     });
     slider.addEventListener('input', () => { this.speedWritten = false; updateSpeedo(); });
 
     if (this.speedLimitMph != null) slider.value = String(this.speedLimitMph);
+    updatePulleyRatio();
 
-    // Prefill gear ratio/pole count from a live read rather than asking
-    // the person to guess a mechanical spec blind — but only if they
-    // haven't already typed/edited a value this session.
+    // Prefill pole count from a live read rather than asking the
+    // person to guess a mechanical spec blind — but only if they
+    // haven't already typed/edited a value this session. Gear ratio
+    // doesn't get a direct prefill anymore since it's derived from the
+    // pulley dropdowns above; instead, find the closest matching
+    // pulley pair to whatever ratio is already on the board and
+    // preselect that, clearly marked as an approximation (there's no
+    // exact inverse from a single ratio number back to two teeth
+    // counts, and the board may not have even been set up with these
+    // pulleys before).
     (async () => {
       try {
         const raw = await this.client.requestMcConfRaw(null);
         const setup = parseMcConfSetupFields(raw);
         if (setup) {
-          if (this.gearRatio == null && setup.gearRatio > 0) {
-            this.gearRatio = setup.gearRatio;
-            gearInput.value = setup.gearRatio.toFixed(2);
+          if (this.motorPulleyTeeth == null && this.hubPulleyTeeth == null && setup.gearRatio > 0) {
+            const approx = closestPulleyPair(setup.gearRatio);
+            if (approx) {
+              motorPulleySelect.value = String(approx.motorTeeth);
+              hubPulleySelect.value = String(approx.hubTeeth);
+              updatePulleyRatio();
+            }
           }
           if (this.motorPoles == null && setup.motorPoles > 0) {
             this.motorPoles = setup.motorPoles;
             polesInput.value = setup.motorPoles;
           }
-          prefillStatusEl.textContent = 'Gear ratio and pole count read from the VESC — ' +
-            'double-check these match your actual build, then adjust if not.';
+          prefillStatusEl.textContent = 'Pole count read from the VESC; pulley selection ' +
+            'approximated from the current gear ratio — double-check both match your actual ' +
+            'build, then adjust if not.';
         } else {
           prefillStatusEl.textContent = 'Could not read current gearing/pole count — enter them manually.';
         }
