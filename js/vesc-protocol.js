@@ -29,8 +29,10 @@ export const COMM = {
   SET_RPM: 8,
   GET_MCCONF: 14,
   SET_MCCONF: 13,
+  GET_MCCONF_DEFAULT: 15,
   GET_APPCONF: 17,
   SET_APPCONF: 16,
+  GET_APPCONF_DEFAULT: 18,
   DETECT_MOTOR_R_L: 25,
   DETECT_MOTOR_FLUX_LINKAGE: 26,
   DETECT_ENCODER: 27,
@@ -324,6 +326,46 @@ export function erpmToMps(erpm, motorPoles, gearRatio, wheelDiameterM) {
 }
 export function mpsToErpm(mps, motorPoles, gearRatio, wheelDiameterM) {
   return mps * erpmSpeedFactor(motorPoles, gearRatio, wheelDiameterM);
+}
+
+/**
+ * Belt-drive pulley picker, for kits (all of Scott's) that gear down
+ * through a motor pulley + hub pulley rather than a chain/gearbox
+ * ratio someone would otherwise have to know or measure by hand.
+ * gear_ratio (si_gear_ratio, what MCCONF actually stores and what
+ * erpmSpeedFactor/mpsToErpm/erpmToMps above take) is motor turns per
+ * wheel turn — for a belt, that's simply hub teeth / motor teeth,
+ * same relationship as a chain sprocket pair (belt speed is constant
+ * across both pulleys, so teeth count and rotation speed are
+ * inversely proportional).
+ */
+export const PULLEY_MOTOR_TEETH_OPTIONS = Array.from({ length: 20 - 12 + 1 }, (_, i) => i + 12); // 12T-20T
+export const PULLEY_HUB_TEETH_OPTIONS = Array.from({ length: 85 - 58 + 1 }, (_, i) => i + 58);   // 58T-85T
+export function pulleyGearRatio(motorTeeth, hubTeeth) {
+  if (!motorTeeth || !hubTeeth) return null;
+  return hubTeeth / motorTeeth;
+}
+/**
+ * Best-effort reverse lookup for prefilling the two dropdowns from a
+ * gear ratio already on the board (from a live read, or from before
+ * this calculator existed) — there's no exact inverse for a single
+ * ratio number, so this finds the in-range pulley pair whose ratio is
+ * closest, for the UI to show as an approximation rather than exact.
+ */
+export function closestPulleyPair(targetRatio) {
+  if (!targetRatio || targetRatio <= 0) return null;
+  let best = null;
+  let bestDiff = Infinity;
+  for (const motorTeeth of PULLEY_MOTOR_TEETH_OPTIONS) {
+    for (const hubTeeth of PULLEY_HUB_TEETH_OPTIONS) {
+      const diff = Math.abs(hubTeeth / motorTeeth - targetRatio);
+      if (diff < bestDiff) {
+        bestDiff = diff;
+        best = { motorTeeth, hubTeeth, ratio: hubTeeth / motorTeeth };
+      }
+    }
+  }
+  return best;
 }
 
 /**
