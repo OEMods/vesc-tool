@@ -738,7 +738,15 @@ export function parseDetectApplyAllFoc(payload) {
   else if (code === -10) { message = 'Flux linkage detection failed. Nothing was changed or saved — check motor phase connections and try again.'; }
   else if (code === -50) { message = 'CAN-bus detection timed out.'; }
   else if (code === -51) { message = 'CAN-bus detection failed on at least one linked VESC.'; }
-  else if (code <= -100) { message = `Motor fault during detection: ${faultName(code + 100)}. Nothing was changed or saved.`; }
+  // Fault codes are returned as (faultCode - 100) — see conf_general.c's
+  // "Offset fault by -100" comment. FAULT_NAMES covers faultCode 0-27,
+  // so the offset range is -100 (fault 0) down to -73 (fault 27). This
+  // was previously checked as `code <= -100`, which only ever matched
+  // fault 0 (FAULT_CODE_NONE, which firmware wouldn't even report as a
+  // failure) — every real fault (under voltage, over current, etc.)
+  // fell through to the generic "unknown code" message below instead
+  // of naming the actual fault. Fixed to cover the whole offset range.
+  else if (code <= -73 && code >= -100) { message = `Motor fault during detection: ${faultName(code + 100)}. Nothing was changed or saved.`; }
   else { message = `Detection failed (code ${code}). Nothing was changed or saved.`; }
   return { code, message, success };
 }
