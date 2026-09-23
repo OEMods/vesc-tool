@@ -145,11 +145,17 @@ export class RtDataPage {
         <p class="wizard__text wizard__text--note">No faults yet.</p>
       </div>
 
-      <div class="wizard__capture-row" style="grid-template-columns:auto auto 1fr;">
+      <div class="wizard__capture-row" style="grid-template-columns:auto auto auto 1fr;">
         <button class="btn btn--secondary" id="rtLogToggle">Start logging</button>
         <button class="btn btn--secondary" id="rtLogSave" disabled>Save log</button>
+        <button class="btn btn--secondary" id="rtLogView" disabled>View log</button>
         <span class="wizard__text wizard__text--note" id="rtLogStatus" style="align-self:center; margin:0;">Not logging.</span>
       </div>
+      <p class="wizard__text wizard__text--note">If "Save log" does nothing (some
+      Bluetooth-only browsers, like Bluefy on iPhone, don't implement file
+      downloads), use "View log" instead — it opens the CSV as plain text in a
+      new tab, which you can then select-all and copy, or use that browser's
+      share/save option on.</p>
     `;
     wrap.appendChild(body);
     this.root.appendChild(wrap);
@@ -181,7 +187,18 @@ export class RtDataPage {
     const faultLogEl = body.querySelector('#rtFaultLog');
     const logToggle = body.querySelector('#rtLogToggle');
     const logSave = body.querySelector('#rtLogSave');
+    const logView = body.querySelector('#rtLogView');
     const logStatus = body.querySelector('#rtLogStatus');
+
+    // Shared by both Save and View — builds the CSV text from whatever
+    // rows were captured this session.
+    const buildLogCsv = () => {
+      const header = ['time_ms', ...FIELDS.map((f) => f.key)].join(',');
+      const lines = this._logRows.map((row) =>
+        [row.t, ...FIELDS.map((f) => row[f.key])].join(',')
+      );
+      return [header, ...lines].join('\n');
+    };
 
     // Chart series paths — created once, updated in place each tick.
     const chartPaths = CHART_SERIES.map((s) => {
@@ -337,23 +354,21 @@ export class RtDataPage {
         logToggle.textContent = 'Stop logging';
         logToggle.dataset.active = 'true';
         logSave.disabled = true;
+        logView.disabled = true;
         logStatus.textContent = 'Logging\u2026 0 samples.';
       } else {
         this._logging = false;
         logToggle.textContent = 'Start logging';
         logToggle.dataset.active = 'false';
         logSave.disabled = this._logRows.length === 0;
+        logView.disabled = this._logRows.length === 0;
         logStatus.textContent = `Stopped \u2014 ${this._logRows.length} samples ready to save.`;
       }
     });
 
     logSave.addEventListener('click', () => {
       if (this._logRows.length === 0) return;
-      const header = ['time_ms', ...FIELDS.map((f) => f.key)].join(',');
-      const lines = this._logRows.map((row) =>
-        [row.t, ...FIELDS.map((f) => row[f.key])].join(',')
-      );
-      const csv = [header, ...lines].join('\n');
+      const csv = buildLogCsv();
       const blob = new Blob([csv], { type: 'text/csv' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -363,8 +378,30 @@ export class RtDataPage {
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      // Revoke on a delay, not immediately: some engines process the
+      // download asynchronously, and revoking the object URL right
+      // after the click can race ahead of that and invalidate the
+      // blob before it's actually been read.
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
       logStatus.textContent = `Saved ${this._logRows.length} samples.`;
+    });
+
+    // Fallback for browsers/wrappers with no real download support \u2014
+    // e.g. Bluefy on iPhone (a custom WKWebView shell that adds Web
+    // Bluetooth, but has no guarantee it wires up a file-download
+    // delegate the way a real browser does, so the Save button's
+    // synthetic <a download> click can silently do nothing). Opening
+    // the same CSV as a plain-text page in a new tab is just page
+    // navigation, not a download API call, so it works even where
+    // Save doesn't \u2014 the person can then select-all/copy the text or
+    // use whatever share/save affordance that browser provides.
+    logView.addEventListener('click', () => {
+      if (this._logRows.length === 0) return;
+      const csv = buildLogCsv();
+      const blob = new Blob([csv], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      window.open(url, '_blank');
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
     });
   }
 }
