@@ -1,4 +1,5 @@
 import { VescUsbClient } from './vesc-usb.js';
+import { VescBleClient } from './vesc-ble.js';
 import { SetupWizard } from './vesc-wizard.js';
 import { PedalConfigPage } from './vesc-pedal-config.js';
 import { MotorConfigPage } from './vesc-motor-config.js';
@@ -10,15 +11,20 @@ import { APPCONF_OFFSETS, MCCONF_OFFSETS, parseMcConfConfigFields, erpmToMps, mp
 
 const MPS_TO_MPH = 2.2369362921;
 
-// Milestone: USB first. This file talks to VescUsbClient — same shape
-// of client (connect/disconnect/onValues/onLog/onConnectionChange) as
-// VescBleClient, so swapping transports later is a one-line change,
-// not a rewrite.
+// USB and BLE are both wired in now (VescUsbClient / VescBleClient) —
+// same shape of client (connect/disconnect/onValues/onLog/
+// onConnectionChange/targetCanId/every MCCONF-APPCONF method), so the
+// person picks a transport with one of the two connect buttons below
+// and everything past that point (wizard, config pages, dashboard) is
+// entirely transport-agnostic — it was written against VescUsbClient's
+// shape, but never anything USB-specific.
 
 const els = {
-  unsupportedBanner: document.getElementById('unsupportedBanner'),
+  unsupportedUsbBanner: document.getElementById('unsupportedUsbBanner'),
+  unsupportedBleBanner: document.getElementById('unsupportedBleBanner'),
   connectPanel: document.getElementById('connectPanel'),
-  connectBtn: document.getElementById('connectBtn'),
+  connectUsbBtn: document.getElementById('connectUsbBtn'),
+  connectBleBtn: document.getElementById('connectBleBtn'),
   telemetry: document.getElementById('telemetry'),
   statusPill: document.getElementById('statusPill'),
   statusText: document.getElementById('statusText'),
@@ -69,17 +75,36 @@ const readoutFields = {
   tempMotor: (v) => v.tempMotorC.toFixed(0),
 };
 
-const client = new VescUsbClient();
-let stopPolling = null;
+function log(msg, kind = '') {
+  const time = new Date().toLocaleTimeString([], { hour12: false });
+  (kind === 'error' ? console.error : console.debug)(`[vesc] ${time}  ${msg}`);
+}
 
-// Cached vehicle geometry (poles/gear/wheel) so the dashboard's live
-// speed readout doesn't need a fresh MCCONF read on every poll tick —
-// just re-derived from ERPM in GET_VALUES. Refreshed whenever a page
-// that could have changed it (Motor config, a profile apply, a Quick
-// Adjust speed save) closes/completes.
-let vehicleGeometry = null; // { motorPoles, gearRatio, wheelDiameterM }
+function setStatus(state, text) {
+  els.statusPill.dataset.state = state;
+  els.statusText.textContent = text;
+}
 
-async function refreshVehicleGeometry() {
+// Everything below depends on a chosen transport (USB or BLE) — built
+// once, the first time either connect button is used, and never
+// rebuilt after that (picking a transport is a one-time choice for
+// the session; switching means reloading the page, same as VESC Tool
+// itself doesn't let you hot-swap a connection type). `client` is
+// whichever concrete client (VescUsbClient or VescBleClient) got
+// picked; nothing past this point cares which one it is.
+let appStarted = false;
+
+function startApp(client) {
+  let stopPolling = null;
+
+  // Cached vehicle geometry (poles/gear/wheel) so the dashboard's live
+  // speed readout doesn't need a fresh MCCONF read on every poll tick —
+  // just re-derived from ERPM in GET_VALUES. Refreshed whenever a page
+  // that could have changed it (Motor config, a profile apply, a Quick
+  // Adjust speed save) closes/completes.
+  let vehicleGeometry = null; // { motorPoles, gearRatio, wheelDiameterM }
+
+  async function refreshVehicleGeometry() {
   try {
     const raw = await client.requestMcConfRaw(null);
     const c = parseMcConfConfigFields(raw);
@@ -331,16 +356,6 @@ els.disconnectBtn.addEventListener('click', () => {
   client.disconnect();
 });
 
-function log(msg, kind = '') {
-  const time = new Date().toLocaleTimeString([], { hour12: false });
-  (kind === 'error' ? console.error : console.debug)(`[vesc] ${time}  ${msg}`);
-}
-
-function setStatus(state, text) {
-  els.statusPill.dataset.state = state;
-  els.statusText.textContent = text;
-}
-
 client.onLog = (msg) => log(msg);
 
 // Raw-byte logging so we can validate GET_VALUES field offsets against
@@ -418,31 +433,75 @@ client.onValues = (values) => {
     dutyPct > 80 ? dutyColors.high : dutyPct > 45 ? dutyColors.mid : dutyColors.low;
 };
 
-els.connectBtn.addEventListener('click', async () => {
-  els.connectBtn.disabled = true;
+} // end startApp
+
+/**
+ * Picking a transport is a one-time choice for the session: the first
+ * successful click of either connect button builds the whole app
+ * (startApp) around that concrete client, and every button past this
+ * point (wizard, config pages, disconnect) talks to that same client
+ * instance for the rest of the session — that's `activeClient` below.
+ * Disconnecting reopens the connect panel (so the person can
+ * reconnect), but it must reconnect the SAME transport instance, not
+ * build a second app on top of the same DOM — so once a transport is
+ * picked, the OTHER connect button is hidden for the rest of the
+ * session, and the chosen button's clicks after that reuse
+ * `activeClient` instead of calling startApp again. Switching
+ * transports means reloading the page — you can't hot-swap a Web
+ * Serial port for a Web Bluetooth device mid-session anyway, and VESC
+ * Tool itself doesn't offer that either.
+ */
+let activeClient = null;
+
+async function connectWith(makeClient, btn, otherBtn, unsupportedErrorCode, unsupportedEl) {
+  if (!appStarted) {
+    activeClient = makeClient();
+    startApp(activeClient);
+    appStarted = true;
+    otherBtn.hidden = true;
+  }
+  const client = activeClient;
+  btn.disabled = true;
   setStatus('connecting', 'Connecting…');
   try {
     await client.connect();
   } catch (err) {
     setStatus('idle', 'Not connected');
-    if (err.message === 'NO_WEB_SERIAL') {
-      els.unsupportedBanner.hidden = false;
+    if (err.message === unsupportedErrorCode) {
+      unsupportedEl.hidden = false;
     } else if (err.name === 'NotFoundError') {
       log('No device selected.', '');
     } else {
       log(`Connect failed: ${err.message}`, 'error');
     }
   } finally {
-    els.connectBtn.disabled = false;
+    btn.disabled = false;
   }
+}
+
+els.connectUsbBtn.addEventListener('click', () => {
+  connectWith(() => new VescUsbClient(), els.connectUsbBtn, els.connectBleBtn, 'NO_WEB_SERIAL', els.unsupportedUsbBanner);
+});
+
+els.connectBleBtn.addEventListener('click', () => {
+  connectWith(() => new VescBleClient(), els.connectBleBtn, els.connectUsbBtn, 'NO_WEB_BLUETOOTH', els.unsupportedBleBanner);
 });
 
 // Browser support check on load — don't wait for a failed connect
-// attempt to tell the customer their browser can't do this at all.
+// attempt to tell the customer their browser can't do either transport
+// at all. Each button is independently disabled/labeled — a browser
+// that supports one but not the other (e.g. desktop Safari supports
+// neither; some future mobile browser could support BLE only) still
+// leaves the working button usable.
 if (!VescUsbClient.isSupported()) {
-  els.unsupportedBanner.hidden = false;
-  els.connectBtn.disabled = true;
-  els.connectBtn.textContent = 'USB serial not available in this browser';
+  els.unsupportedUsbBanner.hidden = false;
+  els.connectUsbBtn.disabled = true;
+  els.connectUsbBtn.textContent = 'USB not available in this browser';
+}
+if (!VescBleClient.isSupported()) {
+  els.unsupportedBleBanner.hidden = false;
+  els.connectBleBtn.disabled = true;
+  els.connectBleBtn.textContent = 'Bluetooth not available in this browser';
 }
 
 log('Ready.');

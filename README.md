@@ -1,15 +1,20 @@
 # VESC Connect — Milestone 2
 
-Connect + live telemetry, plus the start of the customer setup wizard.
-Currently wired to **USB** (Web Serial) — BLE (`vesc-ble.js`) is built
-and kept in sync in shape, not wired into `app.js` yet.
+Connect + live telemetry, plus the customer setup wizard and config
+pages. Both transports are wired in and selectable at the connect
+screen: **USB** (Web Serial, `vesc-usb.js`) and **Bluetooth**
+(Web Bluetooth / Nordic UART Service, `vesc-ble.js`). Two buttons —
+"Connect via USB" / "Connect via Bluetooth" — pick one for the
+session; the app itself (wizard, config pages, dashboard) was written
+against the client's shape, not against USB specifically, so nothing
+past the connect screen knows or cares which transport is in use.
 
 ## What's here
 
 - `assets/` — OEMods brand logo and mascot artwork. Needs to come along with the rest of the folder same as `css/`/`js/` when copying files around.
 - `js/vesc-protocol.js` — packet framing, CRC16, GET_VALUES + GET_DECODED_ADC parsing (shared by both transports). Command IDs verified against current firmware source (`vedderb/bldc/datatypes.h`).
-- `js/vesc-usb.js` — Web Serial transport (**active** — what app.js uses right now)
-- `js/vesc-ble.js` — Web Bluetooth transport (built, not wired in yet, kept in sync with the USB client's shape/methods)
+- `js/vesc-usb.js` — Web Serial transport (**active**)
+- `js/vesc-ble.js` — Web Bluetooth transport (**active**) — full method parity with `vesc-usb.js` (same command set, same `_pending*` resolver pattern, same `_handlePacket` dispatch); the only real differences are `connect()`/`disconnect()` (device picker + GATT vs. serial port) and the actual byte-write (chunked 20-byte BLE writes vs. one unrestricted serial write)
 - `js/vesc-wizard.js` — the "New setup" walkthrough: step framework + working pedal sync step
 - `js/app.js` — UI wiring
 - `index.html` / `css/style.css` — the dashboard and wizard styling
@@ -343,9 +348,10 @@ hand-holding:
   explanatory notes shown in the UI: Motor Current Max, Absolute Max Current,
   Max Battery Current, Motor Current Max Brake, Battery Current Max Regen,
   battery pack size (a dropdown, same combo-naming/voltage-cutoff logic as
-  the wizard's battery step), forward top speed (tire diameter/gear
-  ratio/pole count + slider + speedometer, same as the wizard's speed step —
-  same flat 0-30mph slider ceiling too), reverse speed limit (ERPM, capped at
+  the wizard's battery step), forward top speed (tire diameter/pulley-size
+  gear ratio calculator/pole count + slider + speedometer, same as the
+  wizard's speed step, including the same pulley-teeth dropdowns — same
+  flat 0-30mph slider ceiling too), reverse speed limit (ERPM, capped at
   -5000), ERPM limit start (%), Duty Cycle Max (%), and two fixed values
   written behind the scenes on every write (motor/FET temp cutoff at 80°C,
   acceleration temp decrease at 15%). Every value this tool doesn't let you
@@ -399,16 +405,26 @@ time — opening one closes whatever else was open, so two overlays never stack.
    capture-and-diff pass used for APPCONF before shipping the
    battery/speed wizard steps or the Motor Config page's writes to an
    actual customer kit.**
-3. **BLE not wired in yet.** `vesc-ble.js` mirrors the USB client's
-   read/polling shape, but not yet `writeAppConf`/`detectApplyAllFoc`/
-   `writeMcConfRaw`/`writeMcConfBothSides` — those need mirroring
-   before BLE can run the wizard's real writes, including the new
-   battery/speed steps. `app.js` currently imports `VescUsbClient`
-   regardless.
+3. **BLE — RESOLVED (wired in).** `vesc-ble.js` now has full method
+   parity with `vesc-usb.js`: `writeAppConf`/`detectApplyAllFoc`/
+   `writeMcConfRaw`/`writeMcConfBothSides`/the reset-to-defaults
+   methods/`detectLinkedCanId`, everything. `app.js` no longer
+   hardcodes `VescUsbClient` — the connect screen has two buttons
+   ("Connect via USB" / "Connect via Bluetooth"), and picking one
+   builds the whole app around that client for the session (see
+   `startApp`/`connectWith` in `app.js`). Switching transports mid-
+   session isn't supported (reload the page) — same as VESC Tool
+   itself, and not something Web Serial/Web Bluetooth's device-picker
+   model allows for anyway.
 4. **BLE-specific gaps carried forward for later:** reconnect-on-drop
-   logic, and confirming the device filter matches whatever BLE module
+   logic, confirming the device filter matches whatever BLE module
    ships in a given client's kit (Nordic UART service UUID vs. a
-   `namePrefix` fallback — both already sketched in `vesc-ble.js`).
+   `namePrefix` fallback — both already sketched in `vesc-ble.js`), and
+   real-hardware timing validation — the 20-byte chunked write and the
+   same timeouts as USB are a reasonable starting point, not yet
+   confirmed against an actual BLE module under load (a slow/flaky
+   link could need longer timeouts than USB ever does, particularly
+   for the multi-second detection commands).
 
 ## Battery step (wizard)
 
@@ -427,9 +443,10 @@ cutoff) and backwards (a "cutoff end," the harder limit, needs to be a
 *lower* voltage than "cutoff start," not higher). Implemented instead
 with standard li-ion values: 3.3V/cell where the VESC starts tapering
 current back ("start"), 3.0V/cell where it cuts to zero ("end") — see
-`batteryVoltages()` in `vesc-protocol.js`. `l_min_vin`/`l_max_vin` get
-set to 2.7V/cell and 4.25V/cell respectively as the absolute
-under/over-voltage fault floor/ceiling. Regen cutoff fields
+`batteryVoltages()` in `vesc-protocol.js`. `l_min_vin`/`l_max_vin` are
+firmware's absolute, pack-agnostic hard fault floor/ceiling — not a
+per-cell value — and are left at firmware's own compiled-in defaults
+(12V / 90V) for every S-count, rather than scaled to pack size. Regen cutoff fields
 (`l_battery_regen_cut_start/end`) are deliberately left untouched —
 out of scope for what was asked, and every byte not explicitly
 patched passes through unchanged.
@@ -438,11 +455,92 @@ patched passes through unchanged.
 `writeMcConfBothSides` below) and reports plainly whether it wrote one
 side or two.
 
+## Reset to firmware defaults (wizard)
+
+New step, right after Welcome and before Pedal sync — mirrors official
+VESC Tool's own first-run prompt. Offers to wipe this VESC's MCCONF and
+APPCONF back to firmware's compiled-in defaults before anything else
+gets configured. Purely optional (Skip/Back both work, and every later
+step writes its own values regardless of whether this ran) — but it's
+the clean way to clear out a stale or mismatched leftover config from
+a previous setup, a half-finished tune, or another tool, rather than
+building on top of whatever happens to already be on the board. This
+is what surfaced the wizard's own fault-code decoding bug below: a
+real-hardware cross-check against official VESC Tool traced a
+detection failure (error -98) to a stale battery-cutoff (min voltage)
+value left over on the board, not a wiring fault — exactly the kind of
+thing this step now clears up front.
+
+Implemented with `COMM_GET_MCCONF_DEFAULT` (15) / `COMM_GET_APPCONF_DEFAULT`
+(18) — confirmed firmware command IDs that return the *same wire
+format* as the regular `COMM_GET_MCCONF`/`COMM_GET_APPCONF`, just
+populated from `confgenerator_set_defaults_mcconf()`/
+`confgenerator_set_defaults_appconf()` instead of the live config.
+Critically, per firmware source (`commands.c`), the MCCONF-defaults
+path automatically splices this board's *real* FOC current/voltage ADC
+calibration offsets back into the "default" blob it returns — so a
+client can safely implement "reset to defaults" as read-the-default-
+blob-then-write-it-straight-back, with **zero decoding, zero byte
+patching, and zero risk of clobbering hardware calibration.** This is
+categorically safer than every other MCCONF write in this app (which
+patch specific, only mechanically-derived byte offsets — see Known
+Gaps #2): nothing here is decoded at all, it's a pure round-trip.
+
+`resetMcConfToDefaults(targetCanId)` / `resetMcConfToDefaultsBothSides()`
+and `resetAppConfToDefaults()` in `vesc-usb.js` do the read-then-write-
+back, using the same ack-wait pattern as `writeMcConfRaw`/`writeAppConf`.
+MCCONF resets both sides on a dual-motor board (mirrors
+`writeMcConfBothSides` — direct always, CAN-forwarded too if a linked
+VESC is known); APPCONF resets one side only (mirrors `writeAppConf`'s
+existing convention — pedal/app config is physically tied to one side
+of the board, not shared).
+
+## Fault-code decoding fix (motor detection)
+
+Real-hardware cross-check (running "Run full motor detection" here
+against official VESC Tool's own sane detection on the same,
+unchanged setup) surfaced a genuine bug in `parseDetectApplyAllFoc`
+(`vesc-protocol.js`): `COMM_DETECT_APPLY_ALL_FOC` returns fault codes
+offset by -100 (confirmed from `conf_general.c`'s "Offset fault by
+-100" comments), so the valid range for an actual firmware fault is
+-100 (fault 0/NONE) down to -73 (fault 27) — but the code only checked
+`code <= -100`, which only ever matches fault 0. Every real fault
+(under-voltage, over-current, etc.) fell through to a generic "Detection
+failed (code X)" message instead of naming the actual fault. Fixed to
+check the full `-100`–`-73` range, so a message like "Motor fault
+during detection: FAULT_CODE_UNDER_VOLTAGE" now shows instead. This is
+what led to correctly diagnosing a real board's stale battery-cutoff
+config as the actual cause of a detection failure, rather than a
+wiring problem as the generic message implied.
+
+## Pulley-size gear ratio calculator
+
+The old manual "Gear ratio" number field (wizard Speed step and Motor
+Config page) is replaced with a pulley-size calculator: two dropdowns
+— Motor pulley (12T-20T) and Hub pulley (58T-85T) — with gear ratio
+computed as `hubTeeth / motorTeeth` (belt-drive linear speed is
+constant across both pulleys, same inverse relationship as a
+chain/sprocket pair). This matches how these kits are actually
+described and swapped (by pulley tooth count, not an abstract ratio
+number), and removes a class of typo (e.g. entering `4.5` instead of
+`4.83`) that a free-form number field allowed.
+
+`PULLEY_MOTOR_TEETH_OPTIONS`/`PULLEY_HUB_TEETH_OPTIONS`/
+`pulleyGearRatio()`/`closestPulleyPair()` in `vesc-protocol.js`.
+`closestPulleyPair()` is used to approximate a pulley selection when
+prefilling from a live `COMM_GET_MCCONF` read that only has a raw
+gear-ratio float on it (no pulley teeth counts exist on the wire) —
+it picks whichever teeth pair, across the full 9x28 combination grid,
+lands closest to that ratio, and the prefilled status message notes
+it's an approximation. Both the wizard's Speed step and the standalone
+Motor Config page use the identical dropdowns/logic — same options,
+same computed-ratio display, same approximation-on-read behavior.
+
 ## Speed step (wizard)
 
-Asks for tire diameter (mm), and pre-fills gear ratio and motor pole
-count from a live `COMM_GET_MCCONF` read (rather than asking the
-person to guess a mechanical spec blind) — both remain editable in
+Asks for tire diameter (mm) and the pulley teeth pair above, and
+pre-fills both from a live `COMM_GET_MCCONF` read (rather than asking
+the person to guess a mechanical spec blind) — both remain editable in
 case the read is wrong or the person needs to override it. A slider
 (0-30 mph, flat regardless of battery size — Scott's call: if someone
 wants to go faster than that, the "onboarding test" is learning real
@@ -550,10 +648,13 @@ on a phone mounted to the vehicle.
 
 ## Next milestone
 
-Motor detection is unlocked for real (see Known gaps #1), and the
+Motor detection is unlocked for real (see Known gaps #1), the
 battery/speed wizard steps are built and wired to real writes (see
-above). What's left, in priority order: the capture-and-verify pass
-against a real `COMM_GET_MCCONF` dump to confirm the new write offsets
-(Known gaps #2 — this is the one that actually matters before a real
-customer kit uses the battery/speed steps, Profiles, or Quick Adjust),
-then BLE parity (#3/#4).
+above), and BLE now has full command parity with USB and is wired
+into the connect screen (Known gaps #3). What's left, in priority
+order: the capture-and-verify pass against a real `COMM_GET_MCCONF`
+dump to confirm the MCCONF write offsets (Known gaps #2 — still the
+one that actually matters most before a real customer kit uses the
+battery/speed steps, Profiles, or Quick Adjust, on either transport),
+then the remaining BLE-specific gaps (#4) — reconnect-on-drop and
+real-hardware timing/device-filter validation.
