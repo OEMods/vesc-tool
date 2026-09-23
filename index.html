@@ -29,11 +29,16 @@
 
   <main class="app">
 
-    <!-- Unsupported-browser banner, hidden by default -->
-    <div class="banner banner--warn" id="unsupportedBanner" hidden>
+    <!-- Unsupported-transport banners, hidden by default -->
+    <div class="banner banner--warn" id="unsupportedUsbBanner" hidden>
       This browser can't talk to USB serial devices. Open this page in
       <strong>Chrome</strong> or <strong>Edge</strong> on a desktop —
       Safari, Firefox, and all mobile browsers don't support it.
+    </div>
+    <div class="banner banner--warn" id="unsupportedBleBanner" hidden>
+      This browser can't talk to Bluetooth devices. Web Bluetooth needs
+      <strong>Chrome</strong> or <strong>Edge</strong> — Safari and Firefox don't
+      support it on any platform.
     </div>
 
     <section class="connect-panel" id="connectPanel">
@@ -49,7 +54,10 @@
           please connect the USB prior to connecting the battery. For safety, it is
           recommended to always raise the vehicle drive wheels off the ground, free of any
           obstacles, before changing tune settings.</p>
-          <button class="btn btn--primary" id="connectBtn">Connect to VESC</button>
+          <div class="connect-panel__buttons">
+            <button class="btn btn--primary" id="connectUsbBtn">Connect via USB</button>
+            <button class="btn btn--secondary" id="connectBleBtn">Connect via Bluetooth</button>
+          </div>
         </div>
       </div>
     </section>
