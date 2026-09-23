@@ -153,9 +153,8 @@ export class RtDataPage {
       </div>
       <p class="wizard__text wizard__text--note">If "Save log" does nothing (some
       Bluetooth-only browsers, like Bluefy on iPhone, don't implement file
-      downloads), use "View log" instead — it opens the CSV as plain text in a
-      new tab, which you can then select-all and copy, or use that browser's
-      share/save option on.</p>
+      downloads), use "View log" instead — it shows the CSV as text right on
+      this page, which you can copy out manually.</p>
     `;
     wrap.appendChild(body);
     this.root.appendChild(wrap);
@@ -391,17 +390,101 @@ export class RtDataPage {
     // Bluetooth, but has no guarantee it wires up a file-download
     // delegate the way a real browser does, so the Save button's
     // synthetic <a download> click can silently do nothing). Opening
-    // the same CSV as a plain-text page in a new tab is just page
-    // navigation, not a download API call, so it works even where
-    // Save doesn't \u2014 the person can then select-all/copy the text or
-    // use whatever share/save affordance that browser provides.
+    // a new window/tab isn't reliable here either \u2014 confirmed on real
+    // hardware: window.open(blobUrl) opened a blank window in Bluefy,
+    // no content. blob: URLs are scoped to the document that created
+    // them, and a from-scratch new-window implementation in a small
+    // third-party shell has no guarantee it gives the new context
+    // access to the opener's blob registry (or implements window.open
+    // as a real second browsing context at all). So this shows the
+    // CSV in-page instead \u2014 a plain DOM overlay with a
+    // read-only textarea \u2014 which needs nothing beyond what every
+    // webview already has to support to render this app at all: no
+    // download API, no blob-across-windows, no navigation away from
+    // the page (which would also drop the live BLE connection).
     logView.addEventListener('click', () => {
       if (this._logRows.length === 0) return;
-      const csv = buildLogCsv();
-      const blob = new Blob([csv], { type: 'text/plain' });
-      const url = URL.createObjectURL(blob);
-      window.open(url, '_blank');
-      setTimeout(() => URL.revokeObjectURL(url), 60000);
+      this._showLogTextModal(buildLogCsv());
     });
+  }
+
+  _showLogTextModal(csv) {
+    const overlay = document.createElement('div');
+    overlay.style.cssText = `
+      position: fixed; inset: 0; z-index: 500;
+      background: rgba(0,0,0,0.85);
+      display: flex; align-items: center; justify-content: center;
+      padding: 16px;
+    `;
+
+    const card = document.createElement('div');
+    card.style.cssText = `
+      background: var(--card-strong); border-radius: var(--radius-lg);
+      max-width: 640px; width: 100%; max-height: 85vh;
+      display: flex; flex-direction: column; padding: 18px;
+      font-family: var(--font-body);
+    `;
+
+    const heading = document.createElement('p');
+    heading.className = 'wizard__text';
+    heading.style.marginTop = '0';
+    heading.textContent = 'Session log \u2014 tap into the box below, select all, then copy (or use "Copy to clipboard" if that works in this browser).';
+    card.appendChild(heading);
+
+    const textarea = document.createElement('textarea');
+    textarea.readOnly = true;
+    textarea.value = csv;
+    textarea.style.cssText = `
+      flex: 1; min-height: 240px; width: 100%; box-sizing: border-box;
+      background: var(--bg); color: var(--ink); border: 1px solid var(--card);
+      border-radius: var(--radius-sm); padding: 10px;
+      font-family: monospace; font-size: 0.8rem; white-space: pre;
+      resize: none;
+    `;
+    card.appendChild(textarea);
+
+    const statusEl = document.createElement('p');
+    statusEl.className = 'wizard__text wizard__text--note';
+    statusEl.style.minHeight = '1.2em';
+    card.appendChild(statusEl);
+
+    const footer = document.createElement('div');
+    footer.className = 'wizard__footer';
+    footer.style.marginTop = '10px';
+
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'btn btn--secondary';
+    copyBtn.textContent = 'Copy to clipboard';
+    copyBtn.addEventListener('click', async () => {
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(csv);
+          statusEl.textContent = 'Copied.';
+        } else {
+          throw new Error('Clipboard API not available');
+        }
+      } catch (_) {
+        // Fallback for a webview with no Clipboard API permission \u2014
+        // select the textarea's contents so at least the manual
+        // tap-select-copy path (which needs nothing but text
+        // selection) is one step shorter.
+        textarea.focus();
+        textarea.select();
+        statusEl.textContent = "Couldn't copy automatically \u2014 text is now selected, use this browser's own copy action.";
+      }
+    });
+    footer.appendChild(copyBtn);
+
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'btn btn--primary';
+    closeBtn.textContent = 'Close';
+    closeBtn.addEventListener('click', () => overlay.remove());
+    footer.appendChild(closeBtn);
+
+    card.appendChild(footer);
+    overlay.appendChild(card);
+    document.body.appendChild(overlay);
+    textarea.focus();
+    textarea.select();
   }
 }
